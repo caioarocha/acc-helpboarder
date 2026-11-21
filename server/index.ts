@@ -1,4 +1,6 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
+import { existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { config, isMock } from './config';
 import { HttpError, checkConnection, getIterations, loadStories, storyIdsInIteration } from './azure';
 import { mockAutomation, mockIterations, mockLoadStories, mockRegression, mockStoryIdsForIteration } from './mock';
@@ -7,6 +9,7 @@ import { aiStatus, generateBug, type BugImage } from './bugAgent';
 import { basicWorkItems, createBug, listAreas } from './bugs';
 import { deleteTemplate, listTemplates, upsertTemplate } from './bugTemplates';
 import { readPrefs, savePrefs } from './prefs';
+import { authStatus, loginOptions, loginVerify, logout, registerOptions, registerVerify, requireSession } from './auth';
 import { loadAutomation } from './automation';
 import { computeMetrics, uniqueById } from '../shared/metrics';
 import type { ConnectionStatus, StoriesResponse, StorySummary } from '../shared/types';
@@ -14,6 +17,28 @@ import type { ConnectionStatus, StoriesResponse, StorySummary } from '../shared/
 const app = express();
 // Prints de evidência chegam em base64 no corpo da requisição
 app.use(express.json({ limit: '40mb' }));
+
+// ---------- Bloqueio com digital (Windows Hello) ----------
+// Estas rotas ficam livres; todo o resto de /api exige sessão desbloqueada.
+app.get('/api/auth/status', async (req, res) => {
+  res.json(await authStatus(req));
+});
+app.post('/api/auth/register/options', async (req, res) => {
+  res.json(await registerOptions(req));
+});
+app.post('/api/auth/register/verify', async (req, res) => {
+  res.json(await registerVerify(req, res));
+});
+app.post('/api/auth/login/options', async (_req, res) => {
+  res.json(await loginOptions());
+});
+app.post('/api/auth/login/verify', async (req, res) => {
+  res.json(await loginVerify(req, res));
+});
+app.post('/api/auth/logout', (req, res) => {
+  res.json(logout(req, res));
+});
+app.use(requireSession);
 
 function buildResponse(data: { stories: StorySummary[]; notFound: number[]; warnings: string[] }): StoriesResponse {
   const tests = uniqueById(data.stories.flatMap((s) => s.testCases));
@@ -192,6 +217,21 @@ app.get('/api/regression', async (_req, res) => {
   res.json(isMock ? mockRegression() : await loadRegression());
 });
 
+// ---------- Modo "app" (inicia com o Windows): o mesmo servidor entrega a tela compilada ----------
+const serveWeb = process.env.SERVE_WEB === 'true';
+const distDir = resolve(process.cwd(), 'dist');
+if (serveWeb) {
+  if (!existsSync(join(distDir, 'index.html'))) {
+    console.error('Pasta dist não encontrada. Rode "npm run build" antes de "npm start".');
+  }
+  app.use(express.static(distDir));
+  // Rotas da tela (ex.: /regressao) devolvem o index.html; /api continua sendo a API
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' || req.path.startsWith('/api')) return next();
+    res.sendFile(join(distDir, 'index.html'));
+  });
+}
+
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   const status = err instanceof HttpError ? err.status : 500;
   const message = err instanceof Error ? err.message : 'Erro inesperado';
@@ -199,10 +239,13 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   res.status(status).json({ error: message });
 });
 
-app.listen(config.port, () => {
+const onListen = () => {
   console.log(
-    `API em http://localhost:${config.port} — ${
+    `${serveWeb ? 'Cockpit' : 'API'} em http://localhost:${config.port} — ${
       isMock ? 'MODO DEMONSTRAÇÃO (sem PAT no .env)' : `Azure DevOps: ${config.org}/${config.project}`
     }`,
   );
-});
+};
+// No modo app, só a própria máquina acessa (127.0.0.1)
+if (serveWeb) app.listen(config.port, '127.0.0.1', onListen);
+else app.listen(config.port, onListen);

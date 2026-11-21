@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router';
-import { BookOpen, Bot, Bug, FlaskConical, LayoutDashboard, RefreshCcw } from 'lucide-react';
+import { BookOpen, Bot, Bug, FlaskConical, LayoutDashboard, Lock, RefreshCcw } from 'lucide-react';
 import type { ConnectionStatus } from '../../shared/types';
+import { lockNow } from '../auth';
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, ready: true },
@@ -50,6 +51,9 @@ export function Sidebar({ status }: { status: ConnectionStatus | null }) {
           <span className="dot" />
           {label}
         </div>
+        <button type="button" className="lock-now" onClick={() => void lockNow()} title="Bloquear o Cockpit agora">
+          <Lock size={14} /> Bloquear
+        </button>
       </div>
     </aside>
   );
