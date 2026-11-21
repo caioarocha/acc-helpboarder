@@ -1,11 +1,19 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { config, isMock } from './config';
 import { HttpError, checkConnection, getIterations, loadStories, storyIdsInIteration } from './azure';
-import { mockIterations, mockLoadStories, mockStoryIdsForIteration } from './mock';
+import { mockAutomation, mockIterations, mockLoadStories, mockRegression, mockStoryIdsForIteration } from './mock';
+import { loadRegression } from './regression';
+import { aiStatus, generateBug, type BugImage } from './bugAgent';
+import { basicWorkItems, createBug, listAreas } from './bugs';
+import { deleteTemplate, listTemplates, upsertTemplate } from './bugTemplates';
+import { readPrefs, savePrefs } from './prefs';
+import { loadAutomation } from './automation';
 import { computeMetrics, uniqueById } from '../shared/metrics';
 import type { ConnectionStatus, StoriesResponse, StorySummary } from '../shared/types';
 
 const app = express();
+// Prints de evidência chegam em base64 no corpo da requisição
+app.use(express.json({ limit: '40mb' }));
 
 function buildResponse(data: { stories: StorySummary[]; notFound: number[]; warnings: string[] }): StoriesResponse {
   const tests = uniqueById(data.stories.flatMap((s) => s.testCases));
@@ -62,6 +70,126 @@ app.get('/api/dashboard', async (req, res) => {
   if (!iteration) throw new HttpError('Informe a sprint (iteration).', 400);
   const ids = isMock ? mockStoryIdsForIteration(iteration) : await storyIdsInIteration(iteration);
   res.json(buildResponse(ids.length ? await getStories(ids) : { stories: [], notFound: [], warnings: [] }));
+});
+
+app.get('/api/automation', async (_req, res) => {
+  res.json(isMock ? mockAutomation() : await loadAutomation());
+});
+
+// ---------- Bugs (agente local) ----------
+
+app.get('/api/bugs/meta', async (_req, res) => {
+  const [ai, areas, iterations] = await Promise.all([
+    aiStatus(),
+    isMock ? Promise.resolve(['Projeto Demo', 'Projeto Demo\\Formalizacao', 'Projeto Demo\\Pagamentos']) : listAreas(),
+    isMock ? Promise.resolve(mockIterations()) : getIterations(),
+  ]);
+  res.json({ ai, areas, iterations: iterations.map((i) => ({ path: i.path, isCurrent: i.isCurrent })), mock: isMock });
+});
+
+// ---------- Preferências salvas (sobrevivem a reinícios) ----------
+
+app.get('/api/prefs', async (_req, res) => {
+  res.json(await readPrefs());
+});
+
+app.put('/api/prefs', async (req, res) => {
+  const raw: unknown[] = Array.isArray(req.body?.usIds) ? req.body.usIds : [];
+  const usIds = [...new Set(raw.map(Number).filter((n) => Number.isInteger(n) && n > 0))].slice(0, 200);
+  res.json(await savePrefs({ usIds }));
+});
+
+app.get('/api/workitems/basic', async (req, res) => {
+  const ids = [
+    ...new Set(
+      String(req.query.ids ?? '')
+        .split(/[\s,;]+/)
+        .map(Number)
+        .filter((n) => Number.isInteger(n) && n > 0),
+    ),
+  ];
+  if (isMock) {
+    return res.json(
+      mockLoadStories(ids).stories.map((s) => ({
+        id: s.id,
+        title: s.title,
+        type: 'User Story',
+        areaPath: 'Projeto Demo\\Formalizacao',
+        iterationPath: s.iterationPath,
+      })),
+    );
+  }
+  res.json(await basicWorkItems(ids));
+});
+
+app.get('/api/bugs/templates', async (_req, res) => {
+  res.json(await listTemplates());
+});
+
+app.post('/api/bugs/templates', async (req, res) => {
+  const name = String(req.body?.name ?? '').trim();
+  if (!name) throw new HttpError('Dê um nome ao modelo.', 400);
+  res.json(await upsertTemplate(name, req.body?.fields ?? {}));
+});
+
+app.delete('/api/bugs/templates/:id', async (req, res) => {
+  await deleteTemplate(String(req.params.id));
+  res.json({ ok: true });
+});
+
+app.post('/api/bugs/generate', async (req, res) => {
+  const description = String(req.body?.description ?? '');
+  const images: BugImage[] = Array.isArray(req.body?.images) ? req.body.images.slice(0, 6) : [];
+  if (!description.trim() && !images.length) throw new HttpError('Descreva o bug ou anexe uma evidência.', 400);
+
+  const status = await aiStatus();
+  if (!status.running) throw new HttpError('O Ollama não está rodando. Abra o Ollama e tente de novo.', 503);
+  if (!status.installed) throw new HttpError(`O modelo ${status.model} não foi baixado. Rode: ollama pull ${status.model}`, 503);
+
+  const abort = new AbortController();
+  res.on('close', () => abort.abort());
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache');
+  try {
+    for await (const chunk of generateBug(description, images, abort.signal)) res.write(chunk);
+  } catch (e) {
+    if (!abort.signal.aborted) res.write(`\n\n[ERRO] ${(e as Error).message}`);
+  }
+  res.end();
+});
+
+app.post('/api/bugs/create', async (req, res) => {
+  const b = req.body ?? {};
+  const toIds = (v: unknown) =>
+    String(v ?? '')
+      .split(/[\s,;]+/)
+      .map((s) => Number(s.replace('#', '')))
+      .filter((n) => Number.isInteger(n) && n > 0);
+  const input = {
+    title: String(b.title ?? ''),
+    body: String(b.body ?? ''),
+    severity: String(b.severity ?? ''),
+    stageIntroduced: String(b.stageIntroduced ?? ''),
+    channel: String(b.channel ?? ''),
+    origin: String(b.origin ?? 'INTERNO'),
+    areaPath: String(b.areaPath ?? ''),
+    iterationPath: String(b.iterationPath ?? ''),
+    tags: String(b.tags ?? '').split(/[;,]/),
+    stageFound: b.stageFound ? String(b.stageFound) : undefined,
+    defectType: b.defectType ? String(b.defectType) : undefined,
+    relatedIds: toIds(b.relatedIds),
+    parentId: toIds(b.parentId)[0] ?? null,
+    images: Array.isArray(b.images) ? (b.images as BugImage[]).slice(0, 10) : [],
+    validateOnly: !!b.validateOnly,
+  };
+  if (isMock) {
+    return res.json({ validateOnly: input.validateOnly, id: input.validateOnly ? null : 99999, title: input.title, url: null, attachments: input.images.length });
+  }
+  res.json(await createBug(input));
+});
+
+app.get('/api/regression', async (_req, res) => {
+  res.json(isMock ? mockRegression() : await loadRegression());
 });
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

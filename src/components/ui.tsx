@@ -1,5 +1,14 @@
 import type { ReactNode } from 'react';
-import { AlertTriangle, CheckCircle2, CircleDashed, MinusCircle, RotateCw, XCircle } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  CircleDashed,
+  MinusCircle,
+  RotateCw,
+  XCircle,
+} from 'lucide-react';
 import type { Health, StateCounts, StateKey } from '../../shared/types';
 import { HEALTH_META, STATES, STATE_COLOR, approvalTone, fmtPct } from '../theme';
 
@@ -88,10 +97,10 @@ export function StackedBar({ counts, total }: { counts: StateCounts; total: numb
   );
 }
 
-export function StateLegendList({ counts }: { counts: StateCounts }) {
+export function StateLegendList({ counts, hideZero = false }: { counts: StateCounts; hideZero?: boolean }) {
   return (
     <ul className="legend-list">
-      {STATES.map((s) => (
+      {STATES.filter((s) => !hideZero || counts[s.key] > 0).map((s) => (
         <li key={s.key}>
           <span className="swatch" style={{ background: s.color }} />
           {s.label}
@@ -138,6 +147,72 @@ export function Warnings({ items }: { items: string[] }) {
           <div key={w}>{w}</div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** Lista de páginas com reticências: 1 … 4 5 6 … 12 */
+function pageList(current: number, total: number): (number | '…')[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const pages = new Set([1, total, current - 1, current, current + 1]);
+  const sorted = [...pages].filter((p) => p >= 1 && p <= total).sort((a, b) => a - b);
+  const out: (number | '…')[] = [];
+  sorted.forEach((p, i) => {
+    if (i > 0 && p - sorted[i - 1] > 1) out.push('…');
+    out.push(p);
+  });
+  return out;
+}
+
+/** Rodapé de tabela com paginação */
+export function Pagination({
+  page,
+  pageSize,
+  total,
+  noun,
+  onChange,
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  noun: string;
+  onChange: (page: number) => void;
+}) {
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const from = total ? (page - 1) * pageSize + 1 : 0;
+  const to = Math.min(total, page * pageSize);
+  return (
+    <div className="table-foot">
+      <span className="muted small">
+        {from}–{to} de {total} {noun}
+      </span>
+      {pages > 1 && (
+        <nav className="pager" aria-label="Paginação">
+          <button type="button" onClick={() => onChange(page - 1)} disabled={page === 1} aria-label="Página anterior">
+            <ChevronLeft size={16} />
+          </button>
+          {pageList(page, pages).map((p, i) =>
+            p === '…' ? (
+              <span key={`e${i}`} className="pager-gap">
+                …
+              </span>
+            ) : (
+              <button
+                key={p}
+                type="button"
+                className={p === page ? 'active' : ''}
+                onClick={() => onChange(p)}
+                aria-current={p === page ? 'page' : undefined}
+              >
+                {p}
+              </button>
+            ),
+          )}
+          <button type="button" onClick={() => onChange(page + 1)} disabled={page === pages} aria-label="Próxima página">
+            <ChevronRight size={16} />
+          </button>
+        </nav>
+      )}
     </div>
   );
 }

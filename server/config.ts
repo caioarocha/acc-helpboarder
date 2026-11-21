@@ -25,6 +25,14 @@ export const config = {
     bug: env('AZDO_TYPE_BUG') || 'Bug',
   },
   executionModeField: env('AZDO_FIELD_EXECUTION_MODE'),
+  automation: {
+    /** ID da query salva que lista os cenários automatizados */
+    queryId: env('AZDO_AUTOMATION_QUERY_ID'),
+    tagBuilt: env('AZDO_TAG_CONSTRUIDO') || 'Construído',
+    tagBuilding: env('AZDO_TAG_EM_CONSTRUCAO') || 'Em construção',
+    tagCorban: env('AZDO_TAG_CORBAN') || 'CORBAN',
+    tagAgencias: env('AZDO_TAG_AGENCIAS') || 'Agencias',
+  },
   bugClosedStates: list('AZDO_BUG_CLOSED_STATES', ['Closed', 'Done', 'Resolved', 'Removed', 'Rejected', 'Cancelled']).map((s) => s.toLowerCase()),
 };
 

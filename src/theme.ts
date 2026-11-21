@@ -53,7 +53,18 @@ export const HEALTH_META: Record<Health, { label: string; tone: string }> = {
 
 export const fmtPct = (v: number | null | undefined) => (v == null ? '—' : `${Math.round(v * 100)}%`);
 
-export const fmtDate = (iso: string | null | undefined) =>
+/** Percentual com 2 casas decimais (ex.: 70,59%) */
+export const fmtPct2 = (v: number | null | undefined) =>
+  v == null
+    ? '—'
+    : `${(v * 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+
+export const fmtDateTime = (iso: string | null | undefined) =>
+  iso
+    ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : '—';
+
+export const fmtDate =(iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '—';
 
 export const approvalTone = (v: number | null) => (v == null ? 'neutral' : v >= 0.9 ? 'ok' : v >= 0.6 ? 'warn' : 'bad');

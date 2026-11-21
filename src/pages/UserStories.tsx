@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { OverviewPanel } from '../components/OverviewPanel';
 import { BookOpen, Bug, ChevronDown, ChevronUp, CircleCheck, Filter, Layers, Hourglass, ListChecks, RotateCw, Search, X } from 'lucide-react';
@@ -11,17 +11,9 @@ import { ResultsByStoryChart } from '../components/charts';
 import { BugsBySeverity } from '../components/BugsBySeverity';
 import { Card, ErrorBox, KpiCard, Skeleton, Warnings } from '../components/ui';
 import { approvalTone, fmtPct } from '../theme';
+import { saveUsIds, useSavedUsIds } from '../usIds';
 
-const STORAGE_KEY = 'helpboarder.us-ids';
-const FILTER_OPEN_KEY = 'helpboarder.us-filter-open';
-
-function readSaved() {
-  try {
-    return localStorage.getItem(STORAGE_KEY) ?? '';
-  } catch {
-    return '';
-  }
-}
+const FILTER_OPEN_KEY = 'cockpit.us-filter-open';
 
 export function UserStoriesPage({ status }: { status: ConnectionStatus | null }) {
   const [params, setParams] = useSearchParams();
@@ -44,13 +36,15 @@ export function UserStoriesPage({ status }: { status: ConnectionStatus | null })
     }
   };
 
-  // Sem IDs na URL: reabre a última consulta
+  // Sem IDs na URL: reabre a última consulta (salva no servidor, sobrevive a reinícios)
+  // Restaura só ao abrir a aba (se você limpar os IDs, eles não voltam sozinhos)
+  const saved = useSavedUsIds();
+  const restored = useRef(!!idsParam);
   useEffect(() => {
-    if (!idsParam) {
-      const saved = readSaved();
-      if (saved) setParams({ ids: saved }, { replace: true });
-    }
-  }, [idsParam, setParams]);
+    if (restored.current || !saved.ready) return;
+    restored.current = true;
+    if (!idsParam && saved.ids.length) setParams({ ids: saved.ids.join(',') }, { replace: true });
+  }, [idsParam, saved.ids, saved.ready, setParams]);
 
   useEffect(() => setInput(ids.join(', ')), [ids]);
 
@@ -63,11 +57,7 @@ export function UserStoriesPage({ status }: { status: ConnectionStatus | null })
 
   const apply = () => {
     const next = parseIds(input);
-    try {
-      localStorage.setItem(STORAGE_KEY, next.join(','));
-    } catch {
-      /* ignora */
-    }
+    void saveUsIds(next);
     setParams(next.length ? { ids: next.join(',') } : {});
   };
 

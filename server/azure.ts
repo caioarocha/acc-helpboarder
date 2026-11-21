@@ -16,17 +16,27 @@ const orgUrl = () => `https://dev.azure.com/${encodeURIComponent(config.org)}`;
 export const projUrl = () => `${orgUrl()}/${encodeURIComponent(config.project)}`;
 const workItemUrl = (id: number) => `${projUrl()}/_workitems/edit/${id}`;
 
-export async function az<T>(url: string, body?: unknown): Promise<T> {
+/**
+ * Chamada à API do Azure DevOps.
+ * `contentType` permite enviar binário (anexos) ou JSON Patch (criação de work item).
+ */
+export async function az<T>(url: string, body?: unknown, contentType = 'application/json'): Promise<T> {
   let res: Response;
+  const isBinary = body instanceof Uint8Array;
   try {
     res = await fetch(url, {
       method: body === undefined ? 'GET' : 'POST',
       headers: {
         Authorization: `Basic ${Buffer.from(`:${config.pat}`).toString('base64')}`,
         Accept: 'application/json',
-        'Content-Type': 'application/json',
+        'Content-Type': contentType,
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body:
+        body === undefined
+          ? undefined
+          : isBinary
+            ? new Blob([new Uint8Array(body as Uint8Array)])
+            : JSON.stringify(body),
       redirect: 'manual',
     });
   } catch (e) {
@@ -36,12 +46,25 @@ export async function az<T>(url: string, body?: unknown): Promise<T> {
     );
   }
 
+  // Criação de work item / anexo: 401 aqui significa PAT sem escopo de escrita (a leitura já funciona).
+  const isWrite = contentType !== 'application/json';
+  if (isWrite && (res.status === 401 || res.status === 403)) {
+    throw new HttpError(
+      'O PAT não tem permissão de escrita. Gere um PAT com o escopo "Work Items: Read & Write", troque o AZDO_PAT no .env e reinicie o npm run dev.',
+      403,
+    );
+  }
   // PAT inválido costuma voltar 401, ou 203/302 com a página de login em HTML.
   if (res.status === 401 || res.status === 203 || (res.status >= 300 && res.status < 400)) {
     throw new HttpError('PAT inválido ou expirado. Gere um novo token com o escopo "Work Items: Read".', 401);
   }
   if (res.status === 403) {
-    throw new HttpError('O PAT não tem permissão para este recurso (precisa de "Work Items: Read").', 403);
+    throw new HttpError(
+      body === undefined
+        ? 'O PAT não tem permissão para este recurso (precisa de "Work Items: Read").'
+        : 'O PAT não tem permissão de escrita. Gere um PAT com o escopo "Work Items: Read & Write" e atualize o .env.',
+      403,
+    );
   }
   const text = await res.text();
   if (res.status === 404) {

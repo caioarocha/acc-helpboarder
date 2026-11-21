@@ -1,5 +1,41 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { ConnectionStatus, Iteration, StoriesResponse } from '../shared/types';
+import type {
+  AutomationResponse,
+  ConnectionStatus,
+  Iteration,
+  RegressionResponse,
+  StoriesResponse,
+} from '../shared/types';
+
+export interface BugsMeta {
+  ai: { running: boolean; model: string; installed: boolean; models: string[] };
+  areas: string[];
+  iterations: { path: string; isCurrent: boolean }[];
+  mock: boolean;
+}
+
+export interface BasicWorkItem {
+  id: number;
+  title: string;
+  type: string;
+  areaPath: string;
+  iterationPath: string;
+}
+
+export interface BugTemplate {
+  id: string;
+  name: string;
+  fields: Record<string, string>;
+  updatedAt: string;
+}
+
+export interface CreatedBug {
+  validateOnly: boolean;
+  id: number | null;
+  title: string;
+  url: string | null;
+  attachments: number;
+}
 
 async function get<T>(url: string): Promise<T> {
   let res: Response;
@@ -17,6 +53,62 @@ export const api = {
   status: () => get<ConnectionStatus>('/api/status'),
   iterations: () => get<Iteration[]>('/api/iterations'),
   stories: (ids: number[]) => get<StoriesResponse>(`/api/stories?ids=${ids.join(',')}`),
+  automation: () => get<AutomationResponse>('/api/automation'),
+  regression: () => get<RegressionResponse>('/api/regression'),
+  bugsMeta: () => get<BugsMeta>('/api/bugs/meta'),
+  workItemsBasic: (ids: number[]) => get<BasicWorkItem[]>(`/api/workitems/basic?ids=${ids.join(',')}`),
+  bugTemplates: () => get<BugTemplate[]>('/api/bugs/templates'),
+  saveBugTemplate: async (name: string, fields: Record<string, string>) => {
+    const res = await fetch('/api/bugs/templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, fields }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(body?.error ?? `Erro ${res.status}`);
+    return body as BugTemplate;
+  },
+  deleteBugTemplate: async (id: string) => {
+    const res = await fetch(`/api/bugs/templates/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`Erro ${res.status}`);
+  },
+  createBug: async (payload: Record<string, unknown>) => {
+    const res = await fetch('/api/bugs/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(body?.error ?? `Erro ${res.status}`);
+    return body as CreatedBug;
+  },
+  /** Gera o bug em streaming: chama onText a cada pedaço recebido */
+  generateBug: async (
+    payload: { description: string; images: { name: string; dataUrl: string }[] },
+    onText: (full: string) => void,
+    signal: AbortSignal,
+  ) => {
+    const res = await fetch('/api/bugs/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal,
+    });
+    if (!res.ok || !res.body) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.error ?? `Erro ${res.status}`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let full = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      full += decoder.decode(value, { stream: true });
+      onText(full);
+    }
+    return full;
+  },
   dashboard: (iteration: string) => get<StoriesResponse>(`/api/dashboard?iteration=${encodeURIComponent(iteration)}`),
 };
 

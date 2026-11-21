@@ -1,4 +1,4 @@
-# Accenture HelpBoarder — QA Analytics
+# Cockpit — QA Analytics
 
 Dashboard de acompanhamento de testes a partir dos Work Items do Azure DevOps (sem Test Plans).
 

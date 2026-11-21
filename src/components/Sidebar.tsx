@@ -5,9 +5,9 @@ import type { ConnectionStatus } from '../../shared/types';
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, ready: true },
   { to: '/user-stories', label: 'User Stories', icon: BookOpen, ready: true },
-  { to: '/automacao', label: 'Automação', icon: Bot, ready: false },
-  { to: '/regressao', label: 'Regressão', icon: RefreshCcw, ready: false },
-  { to: '/bugs', label: 'Bugs', icon: Bug, ready: false },
+  { to: '/automacao', label: 'Automação', icon: Bot, ready: true },
+  { to: '/regressao', label: 'Regressão', icon: RefreshCcw, ready: true },
+  { to: '/bugs', label: 'Bugs', icon: Bug, ready: true },
 ];
 
 export function Sidebar({ status }: { status: ConnectionStatus | null }) {
@@ -27,11 +27,7 @@ export function Sidebar({ status }: { status: ConnectionStatus | null }) {
           <FlaskConical size={22} strokeWidth={2.2} />
         </div>
         <div>
-          <div className="brand-name">
-            Accenture
-            <br />
-            HelpBoarder
-          </div>
+          <div className="brand-name">Cockpit</div>
           <div className="brand-sub">QA Analytics</div>
         </div>
       </div>
